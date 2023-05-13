@@ -211,7 +211,7 @@ async function main() {
   {
     edges = cleanData?.data?.node?.timeline_list_feed_units?.edges || [];
     const rows = edges.map(({ node }) => {
-      const buff = Buffer.from(node.feedback?.id, 'base64');
+      const buff = Buffer.from(node.feedback?.id || '', 'base64');
       const postId = buff.toString().match(/\d+/)?.[0];
       const dateRaw = node.comet_sections?.context_layout?.story?.comet_sections?.metadata?.[0]?.story?.creation_time;
       const url = node.comet_sections?.content?.story?.wwwURL;
