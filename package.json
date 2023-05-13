@@ -4,7 +4,7 @@
   "description": "",
   "main": "Paige.js",
   "scripts": {
-    "startpost": "pm2 start Post.js --watch && pm2 logs",
+    "startpost": "pm2 start pm2.config.js && pm2 logs",
     "stop": "pm2 stop all"
   },
   "repository": {
