@@ -14,7 +14,7 @@ let alreadyExists;
 let edges;
 let final;
 
-function say(message, error, exit) {
+async function say(message, error, exit) {
   if (error) {
     console.error(`${message}`);
   } else {
@@ -22,6 +22,9 @@ function say(message, error, exit) {
   }
 
   if (error || exit) {
+    await say('Disconnecting DB..');
+    await pg.query(`SELECT pg_advisory_unlock(1);`);
+    await pg.end();
     process.exit(1);
   }
 }
@@ -31,18 +34,18 @@ async function main() {
   {
     pg = new Client();
     try {
-      say('Connecting to postgres db');
+      await say('Connecting to postgres db');
       await pg.connect();
-      say('Connected');
+      await say('Connected');
     } catch (err) {
-      say(err.message, true);
+      await say(err.message, true);
     }
 
   }
 
   // STEP: Crete tables if not created
   {
-    say('Creating page_list table if needed');
+    await say('Creating page_list table if needed');
     try {
       await pg.query(`CREATE TABLE IF NOT EXISTS "page_list" (
                                     fb_account_id varchar(100) primary key,
@@ -50,12 +53,12 @@ async function main() {
                                     cursor_timestamp bigint default null,
                                     next_try_date timestamptz default now()
                                     );`);
-      say('Created');
+      await say('Created');
     } catch (err) {
-      say(err.message, true);
+      await say(err.message, true);
     }
 
-    say('Creating posts table if needed');
+    await say('Creating posts table if needed');
     try {
       await pg.query(`CREATE TABLE IF NOT EXISTS "post_list" (
                                     feedback_id varchar(200) primary key,
@@ -66,41 +69,41 @@ async function main() {
                                     text text,
                                     story_id text
                                     );`);
-      say('Created');
+      await say('Created');
     } catch (err) {
-      say(err.message, true);
+      await say(err.message, true);
     }
 
   }
 
   // STEP: Find a task to do
   {
-    say('Trying to get advisory lock for page_list');
+    await say('Trying to get advisory lock for page_list');
     try {
       await pg.query(`SELECT pg_advisory_lock(1);`);
     } catch (err) {
-      say(err.message, true);
+      await say(err.message, true);
     }
 
-    say('Trying to find a task');
+    await say('Trying to find a task');
     try {
       const result = await pg.query(`SELECT * FROM page_list WHERE next_try_date < now() LIMIT 1;`);
       task = result.rows?.[0];
       if (!task) {
-        say('No tasks available', undefined, true);
+        await say('No tasks available', undefined, true);
       }
 
-      say(`Increasing date of the task: ${task.fb_account_id}`);
+      await say(`Increasing date of the task: ${task.fb_account_id}`);
       await pg.query(`UPDATE page_list SET next_try_date=(SELECT current_timestamp + interval '15 seconds') WHERE fb_account_id='${task.fb_account_id}';`);
     } catch (err) {
-      say(err.message, true);
+      await say(err.message, true);
     }
 
-    say('Unlocking advisory lock for page_list');
+    await say('Unlocking advisory lock for page_list');
     try {
       await pg.query(`SELECT pg_advisory_unlock(1);`);
     } catch (err) {
-      say(err.message, true);
+      await say(err.message, true);
     }
   }
 
@@ -164,7 +167,7 @@ async function main() {
     };
 
     try {
-      say('Making a request to facebook');
+      await say('Making a request to facebook');
       const response = await axios(config);
       fbData = response.data;
 
@@ -172,15 +175,15 @@ async function main() {
         throw new Error('Fb response is empty');
       }
       fbData = typeof fbData === 'string' ? fbData : JSON.stringify(fbData);
-      say('Data received');
+      await say('Data received');
     } catch (err) {
-      say(err.message, true);
+      await say(err.message, true);
     }
   }
 
   // STEP: Clean dirty data
   {
-    say('Cleaning data');
+    await say('Cleaning data');
     const splited = fbData.replaceAll('for (;;);', '').split(/}\r*\n*{/);
     const cleaned = splited
       .map((item, index) => {
@@ -197,7 +200,7 @@ async function main() {
         throw new Error();
       }
     } catch (e) {
-      say('Cannot clean the data', true)
+      await say('Cannot clean the data', true)
     }
   }
 
@@ -205,16 +208,16 @@ async function main() {
   {
     final = fbData.includes('{"is_final":true}') && fbData.includes('ProfileCometTimelineFeed') && fbData.includes('"end_cursor":null');
     if (final) {
-      say('Trying to find the latest post');
+      await say('Trying to find the latest post');
       const result = await pg.query(`SELECT * from post_list where fb_account_id='${task.fb_account_id}' ORDER BY date DESC LIMIT 1;`);
       const theLastPost = result?.rows?.[0];
       if (!theLastPost) {
-        say(`The last post is not fount for account ${task.fb_account_id}`, true);
+        await say(`The last post is not fount for account ${task.fb_account_id}`, true);
       }
 
-      say('No posts found. Final post scraped');
+      await say('No posts found. Final post scraped');
       await pg.query(`UPDATE page_list set next_try_date=now()::DATE + 1, cursor_timestamp=${theLastPost.date}, finished=True, WHERE fb_account_id='${task.fb_account_id}';`);
-      say('The task is postponed', undefined, true);
+      await say('The task is postponed', undefined, true);
     }
   }
 
@@ -246,21 +249,21 @@ async function main() {
     for (let row of rows) {
       try {
         if (!row[0]) {
-          say('No feedback_id found')
+          await say('No feedback_id found')
           continue;
         }
-        say('Saving post into DB');
+        await say('Saving post into DB');
 
         await pg.query(`INSERT INTO "post_list" ("feedback_id", "fb_account_id", "post_id", "date", "url", "text", "story_id") VALUES ($1, $2, $3, $4, $5, $6, $7)`, row);
-        say(`Post saved (${row[4]})`);
-        say(`[${new Date(row[3] * 1000).toLocaleDateString()}] ${row[5]?.slice(0, 30)}`)
+        await say(`Post saved (${row[4]})`);
+        await say(`[${new Date(row[3] * 1000).toLocaleDateString()}] ${row[5]?.slice(0, 30)}`)
       } catch (err) {
         if (err.detail?.includes('feedback_id') && err.detail?.includes('already exists')) {
           alreadyExists = true;
-          say(`Post(${row[4]}) already exists for account ${task.fb_account_id}`);
-          say(`[${new Date(row[3] * 1000).toLocaleDateString()}] ${row[5]?.slice(0, 30)}`)
+          await say(`Post(${row[4]}) already exists for account ${task.fb_account_id}`);
+          await say(`[${new Date(row[3] * 1000).toLocaleDateString()}] ${row[5]?.slice(0, 30)}`)
         } else {
-          say(err.message, true)
+          await say(err.message, true)
         }
       }
     }
@@ -269,13 +272,13 @@ async function main() {
       return node.comet_sections?.context_layout?.story?.comet_sections?.metadata?.[0]?.story?.creation_time;
     });
     const cursorTimestamp = task.finished ? _max(timestamps) : _min(timestamps);
-    say(`Updating cursor_timestamp to ${cursorTimestamp}`);
+    await say(`Updating cursor_timestamp to ${cursorTimestamp}`);
     await pg.query(`UPDATE page_list set cursor_timestamp=${cursorTimestamp} WHERE fb_account_id='${task.fb_account_id}';`);
   }
 
   // STEP: Restarting
   {
-    say('Exiting', undefined, true);
+    await say('Exiting', undefined, true);
   }
 }
 
