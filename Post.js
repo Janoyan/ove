@@ -1,6 +1,8 @@
 const { Client } = require('pg');
 const axios = require('axios');
 const qs = require('qs');
+const _max = require('lodash/max');
+const _min = require('lodash/min');
 const dotenv = require('dotenv');
 
 dotenv.config();
@@ -45,7 +47,7 @@ async function main() {
       await pg.query(`CREATE TABLE IF NOT EXISTS "page_list" (
                                     fb_account_id varchar(100) primary key,
                                     finished bool,
-                                    cursor text default null,
+                                    cursor_timestamp bigint default null,
                                     next_try_date timestamptz default now()
                                     );`);
       say('Created');
@@ -59,7 +61,7 @@ async function main() {
                                     feedback_id varchar(200) primary key,
                                     fb_account_id varchar(200) not null,
                                     post_id varchar(200) not null,
-                                    date timestamptz,
+                                    date bigint,
                                     url text,
                                     text text,
                                     story_id text
@@ -104,6 +106,8 @@ async function main() {
 
   // STEP: Get data from FB
   {
+    const afterTime = task.finished ? (task.cursor_timestamp ? Number(task.cursor_timestamp) + 1 : null) : null;
+    const beforeTime = task.finished ? null : (task.cursor_timestamp ? Number(task.cursor_timestamp) - 1 : null);
     const data = qs.stringify({
       'fb_api_caller_class': 'RelayModern',
       'fb_api_req_friendly_name': 'ProfileCometTimelineFeedRefetchQuery',
@@ -111,10 +115,10 @@ async function main() {
       'doc_id': process.env.DOC_ID,
       variables: JSON.stringify({
         "UFI2CommentsProvider_commentsKey": "ProfileCometTimelineRoute",
-        "afterTime": null,
-        "beforeTime": null,
+        "beforeTime": beforeTime,
+        "afterTime": afterTime,
         "count": 3,
-        "cursor": task.cursor,
+        "cursor": null,
         "displayCommentsContextEnableComment": null,
         "displayCommentsContextIsAdPreview": null,
         "displayCommentsContextIsAggregatedShare": null,
@@ -197,19 +201,29 @@ async function main() {
     }
   }
 
-  // STEP: Exit if finished or empty
+  // STEP: Exit if finished
   {
     final = fbData.includes('{"is_final":true}') && fbData.includes('ProfileCometTimelineFeed') && fbData.includes('"end_cursor":null');
     if (final) {
+      say('Trying to find the latest post');
+      const result = await pg.query(`SELECT * from post_list where fb_account_id='${task.fb_account_id}' ORDER BY date DESC LIMIT 1;`);
+      const theLastPost = result?.rows?.[0];
+      if (!theLastPost) {
+        say(`The last post is not fount for account ${task.fb_account_id}`, true);
+      }
+
       say('No posts found. Final post scraped');
-      await pg.query(`UPDATE page_list set next_try_date=now()::DATE + 1, finished=True, cursor=null, WHERE fb_account_id='${task.fb_account_id}';`);
+      await pg.query(`UPDATE page_list set next_try_date=now()::DATE + 1, cursor_timestamp=${theLastPost.date}, finished=True, WHERE fb_account_id='${task.fb_account_id}';`);
       say('The task is postponed', undefined, true);
     }
   }
 
   // STEP: Saving posts
   {
-    edges = (cleanData?.data?.node?.timeline_list_feed_units?.edges || []).filter((item) => item.node?.comet_sections?.content?.story?.actors?.find((a) => a.id === task.fb_account_id) !== -1);
+    edges = (cleanData?.data?.node?.timeline_list_feed_units?.edges || [])
+      .filter((item) =>
+        item.node?.comet_sections?.content?.story?.actors?.find((a) => a.id === task.fb_account_id) !== -1 &&
+        item.node?.comet_sections?.context_layout?.story?.comet_sections?.metadata?.[0]?.story?.creation_time);
     const rows = edges.map(({ node }) => {
       const buff = Buffer.from(node.feedback?.id || '', 'base64');
       const postId = buff.toString().match(/\d+/)?.[0];
@@ -222,7 +236,7 @@ async function main() {
         node.feedback?.id,
         task.fb_account_id,
         postId,
-        dateRaw ? new Date(dateRaw * 1000) : null,
+        dateRaw,
         url,
         text,
         storyId
@@ -239,33 +253,24 @@ async function main() {
 
         await pg.query(`INSERT INTO "post_list" ("feedback_id", "fb_account_id", "post_id", "date", "url", "text", "story_id") VALUES ($1, $2, $3, $4, $5, $6, $7)`, row);
         say(`Post saved (${row[4]})`);
-        say(`[${new Date(row[3]).toLocaleDateString()}] ${row[5]?.slice(0, 30)}`)
+        say(`[${new Date(row[3] * 1000).toLocaleDateString()}] ${row[5]?.slice(0, 30)}`)
       } catch (err) {
         if (err.detail?.includes('feedback_id') && err.detail?.includes('already exists')) {
           alreadyExists = true;
           say(`Post(${row[4]}) already exists for account ${task.fb_account_id}`);
-          say(`[${new Date(row[3]).toLocaleDateString()}] ${row[5]?.slice(0, 30)}`)
+          say(`[${new Date(row[3] * 1000).toLocaleDateString()}] ${row[5]?.slice(0, 30)}`)
         } else {
           say(err.message, true)
         }
       }
     }
-  }
 
-  // STEP: Postpone page scraping if post already exists
-  {
-    if (task.finished && alreadyExists) {
-      say('Post already exists. Reseting cursor and postponing the page scraping');
-      await pg.query(`UPDATE page_list set next_try_date=now()::DATE + 1, cursor=null WHERE fb_account_id='${task.fb_account_id}';`);
-      say('The page task is postponed', undefined, true);
-    }
-  }
-
-  // STEP: Store page info
-  {
-    const cursor = edges.length > 0 ? edges[edges.length - 1].cursor : null;
-    say(`Setting a new cursor: ${cursor}`);
-    await pg.query(`UPDATE page_list set cursor='${cursor}' WHERE fb_account_id='${task.fb_account_id}';`);
+    const timestamps = edges.map(({ node }) => {
+      return node.comet_sections?.context_layout?.story?.comet_sections?.metadata?.[0]?.story?.creation_time;
+    });
+    const cursorTimestamp = task.finished ? _max(timestamps) : _min(timestamps);
+    say(`Updating cursor_timestamp to ${cursorTimestamp}`);
+    await pg.query(`UPDATE page_list set cursor_timestamp=${cursorTimestamp} WHERE fb_account_id='${task.fb_account_id}';`);
   }
 
   // STEP: Restarting
