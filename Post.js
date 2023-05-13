@@ -209,7 +209,7 @@ async function main() {
 
   // STEP: Saving posts
   {
-    edges = cleanData?.data?.node?.timeline_list_feed_units?.edges || [];
+    edges = (cleanData?.data?.node?.timeline_list_feed_units?.edges || []).filter((item) => item.node?.comet_sections?.content?.story?.actors?.find((a) => a.id === task.fb_account_id) !== -1);
     const rows = edges.map(({ node }) => {
       const buff = Buffer.from(node.feedback?.id || '', 'base64');
       const postId = buff.toString().match(/\d+/)?.[0];
