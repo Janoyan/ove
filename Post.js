@@ -10,6 +10,7 @@ let fbData;
 let cleanData;
 let alreadyExists;
 let edges;
+let final;
 
 function say(message, error, exit) {
   if (error) {
@@ -39,10 +40,11 @@ async function main() {
 
   // STEP: Crete tables if not created
   {
-    say('Creating task table if needed');
+    say('Creating page_list table if needed');
     try {
       await pg.query(`CREATE TABLE IF NOT EXISTS "page_list" (
                                     fb_account_id varchar(100) primary key,
+                                    finished bool,
                                     cursor text default null,
                                     next_try_date timestamptz default now()
                                     );`);
@@ -86,7 +88,7 @@ async function main() {
         say('No tasks available', undefined, true);
       }
 
-      say('Increasing date of the task');
+      say(`Increasing date of the task: ${task.fb_account_id}`);
       await pg.query(`UPDATE page_list SET next_try_date=(SELECT current_timestamp + interval '30 seconds') WHERE fb_account_id='${task.fb_account_id}';`);
     } catch (err) {
       say(err.message, true);
@@ -197,13 +199,10 @@ async function main() {
 
   // STEP: Exit if finished or empty
   {
-    if (
-      fbData.includes('{"is_final":true}') &&
-      fbData.includes('ProfileCometTimelineFeed') &&
-      fbData.includes('"end_cursor":null')
-    ) {
-      say('No posts found. Postponing the task');
-      await pg.query(`UPDATE page_list set next_try_date=now()::DATE + 1, status='paused', info='{}' WHERE fb_account_id='${task.fb_account_id}';`);
+    final = fbData.includes('{"is_final":true}') && fbData.includes('ProfileCometTimelineFeed') && fbData.includes('"end_cursor":null');
+    if (final) {
+      say('No posts found. Final post scraped');
+      await pg.query(`UPDATE page_list set next_try_date=now()::DATE + 1, finished=True, cursor=null, WHERE fb_account_id='${task.fb_account_id}';`);
       say('The task is postponed', undefined, true);
     }
   }
@@ -235,10 +234,11 @@ async function main() {
         say('Saving post into DB');
 
         await pg.query(`INSERT INTO "post_list" ("feedback_id", "fb_account_id", "post_id", "date", "url", "text", "story_id") VALUES ($1, $2, $3, $4, $5, $6, $7)`, row);
-        say('saved');
+        say(`Post saved (${row[4]})`);
       } catch (err) {
         if (err.detail?.includes('feedback_id') && err.detail?.includes('already exists')) {
           alreadyExists = true;
+          say(`Post(${row[4]}) already exists for account ${task.fb_account_id}`);
         } else {
           say(err.message, true)
         }
@@ -248,9 +248,9 @@ async function main() {
 
   // STEP: Postpone page scraping if post already exists
   {
-    if (alreadyExists) {
-      say('Post already exists. Postponing the page scraping');
-      await pg.query(`UPDATE page_list set next_try_date=now()::DATE + 1, status='paused', info='{}' WHERE fb_account_id='${task.fb_account_id}';`);
+    if (task.finished && alreadyExists) {
+      say('Post already exists. Reseting cursor and postponing the page scraping');
+      await pg.query(`UPDATE page_list set next_try_date=now()::DATE + 1, cursor=null WHERE fb_account_id='${task.fb_account_id}';`);
       say('The page task is postponed', undefined, true);
     }
   }
