@@ -181,6 +181,23 @@ async function main() {
     }
   }
 
+  // STEP: Exit if finished
+  {
+    final = fbData.includes('{"is_final":true}') && fbData.includes('ProfileCometTimelineFeed') && fbData.includes('"end_cursor":null');
+    if (final) {
+      await say('Trying to find the latest post');
+      const result = await pg.query(`SELECT * from post_list WHERE fb_account_id='${task.fb_account_id}' ORDER BY date DESC LIMIT 1;`);
+      const theLastPost = result?.rows?.[0];
+      if (!theLastPost) {
+        await say(`The last post is not fount for account ${task.fb_account_id}`, true);
+      }
+
+      await say('No posts found. Final post scraped');
+      await pg.query(`UPDATE page_list set next_try_date=now()::DATE + 1, cursor_timestamp=${theLastPost.date}, finished=True WHERE fb_account_id='${task.fb_account_id}';`);
+      await say('The task is postponed', undefined, true);
+    }
+  }
+
   // STEP: Clean dirty data
   {
     await say('Cleaning data');
@@ -201,23 +218,6 @@ async function main() {
       }
     } catch (e) {
       await say('Cannot clean the data', true)
-    }
-  }
-
-  // STEP: Exit if finished
-  {
-    final = fbData.includes('{"is_final":true}') && fbData.includes('ProfileCometTimelineFeed') && fbData.includes('"end_cursor":null');
-    if (final) {
-      await say('Trying to find the latest post');
-      const result = await pg.query(`SELECT * from post_list where fb_account_id='${task.fb_account_id}' ORDER BY date DESC LIMIT 1;`);
-      const theLastPost = result?.rows?.[0];
-      if (!theLastPost) {
-        await say(`The last post is not fount for account ${task.fb_account_id}`, true);
-      }
-
-      await say('No posts found. Final post scraped');
-      await pg.query(`UPDATE page_list set next_try_date=now()::DATE + 1, cursor_timestamp=${theLastPost.date}, finished=True, WHERE fb_account_id='${task.fb_account_id}';`);
-      await say('The task is postponed', undefined, true);
     }
   }
 
