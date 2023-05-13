@@ -231,6 +231,10 @@ async function main() {
 
     for (let row of rows) {
       try {
+        if (!row[0]) {
+          say('No feedback_id found')
+          continue;
+        }
         say('Saving post into DB');
 
         await pg.query(`INSERT INTO "post_list" ("feedback_id", "fb_account_id", "post_id", "date", "url", "text", "story_id") VALUES ($1, $2, $3, $4, $5, $6, $7)`, row);
