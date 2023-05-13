@@ -89,7 +89,7 @@ async function main() {
       }
 
       say(`Increasing date of the task: ${task.fb_account_id}`);
-      await pg.query(`UPDATE page_list SET next_try_date=(SELECT current_timestamp + interval '30 seconds') WHERE fb_account_id='${task.fb_account_id}';`);
+      await pg.query(`UPDATE page_list SET next_try_date=(SELECT current_timestamp + interval '15 seconds') WHERE fb_account_id='${task.fb_account_id}';`);
     } catch (err) {
       say(err.message, true);
     }
@@ -235,10 +235,12 @@ async function main() {
 
         await pg.query(`INSERT INTO "post_list" ("feedback_id", "fb_account_id", "post_id", "date", "url", "text", "story_id") VALUES ($1, $2, $3, $4, $5, $6, $7)`, row);
         say(`Post saved (${row[4]})`);
+        say(`[${new Date(row[3]).toLocaleDateString()}] ${row[5]?.slice(0, 30)}`)
       } catch (err) {
         if (err.detail?.includes('feedback_id') && err.detail?.includes('already exists')) {
           alreadyExists = true;
           say(`Post(${row[4]}) already exists for account ${task.fb_account_id}`);
+          say(`[${new Date(row[3]).toLocaleDateString()}] ${row[5]?.slice(0, 30)}`)
         } else {
           say(err.message, true)
         }
@@ -258,7 +260,7 @@ async function main() {
   // STEP: Store page info
   {
     const cursor = edges.length > 0 ? edges[edges.length - 1].cursor : null;
-    say(`Setting a new cursor`);
+    say(`Setting a new cursor: ${cursor}`);
     await pg.query(`UPDATE page_list set cursor='${cursor}' WHERE fb_account_id='${task.fb_account_id}';`);
   }
 
@@ -269,10 +271,10 @@ async function main() {
 }
 
 function startMain() {
-  say('Job will be started in 5 sec')
+  say('Job will be started in 1 sec')
   setTimeout(() => {
     main();
-  }, 5000)
+  }, 1000)
 }
 
 startMain();
