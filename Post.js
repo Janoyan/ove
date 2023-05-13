@@ -131,7 +131,7 @@ async function main() {
         "renderLocation": "timeline",
         "scale": 1,
         "should_show_profile_pinned_post": true,
-        "stream_count": 1,
+        "stream_count": 3,
         "taggedInOnly": null,
         "useDefaultActor": false,
         "id": task.fb_account_id
