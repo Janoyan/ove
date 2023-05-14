@@ -276,6 +276,27 @@ async function main() {
     await pg.query(`UPDATE page_list set cursor_timestamp=${cursorTimestamp} WHERE fb_account_id='${task.fb_account_id}';`);
   }
 
+  // STEP: Set final if older than 2012
+  {
+    final = edges.some((edge) => {
+      const dateRaw = edge.node?.comet_sections?.context_layout?.story?.comet_sections?.metadata?.[0]?.story?.creation_time ?? Date.now() / 1000;
+      const year = new Date(dateRaw * 1000).getFullYear();
+      return year <= 2012
+    });
+    if (final) {
+      await say('Trying to find the latest post');
+      const result = await pg.query(`SELECT * from post_list WHERE fb_account_id='${task.fb_account_id}' ORDER BY date DESC LIMIT 1;`);
+      const theLastPost = result?.rows?.[0];
+      if (!theLastPost) {
+        await say(`The last post is not fount for account ${task.fb_account_id}`, true);
+      }
+
+      await say('No posts found. Final post scraped');
+      await pg.query(`UPDATE page_list set next_try_date=now()::DATE + 1, cursor_timestamp=${theLastPost.date}, finished=True WHERE fb_account_id='${task.fb_account_id}';`);
+      await say('The task is postponed', undefined, true);
+    }
+  }
+
   // STEP: Restarting
   {
     await say('Exiting', undefined, true);
